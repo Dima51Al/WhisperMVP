@@ -48,20 +48,21 @@ def setup_logger(config: dict):
 def format_duration(seconds: float) -> str:
     if seconds <= 0:
         return "неизвестно"
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
+    minutes = int(seconds // 60)
     secs = int(seconds % 60)
-    if hours > 0:
-        return f"{hours}:{minutes:02d}:{secs:02d}"
+    if minutes >= 60:
+        hours = minutes // 60
+        minutes = minutes % 60
+        return f"{hours} ч {minutes:02d} мин {secs:02d} сек"
+    elif minutes > 0:
+        return f"{minutes} мин {secs:02d} сек"
     else:
-        return f"{minutes}:{secs:02d}"
+        return f"{secs} сек"
 
 
 def get_audio_duration(file_path: Path) -> float:
-    """Получает длительность через mutagen (быстро, без полной загрузки)"""
     try:
         ext = file_path.suffix.lower()
-
         if ext == ".mp3":
             audio = MP3(file_path)
         elif ext == ".wav":
@@ -70,18 +71,12 @@ def get_audio_duration(file_path: Path) -> float:
             audio = OggVorbis(file_path) or OggFileType(file_path)
         elif ext == ".flac":
             audio = FLAC(file_path)
-        elif ext in [".m4a", ".mp4"]:
+        elif ext in [".m4a", ".mp4", ".mpeg", ".webm"]:
             audio = MP4(file_path)
         else:
-            return 0.0  # Для неподдерживаемых — вернём 0, fallback ниже
-
+            return 0.0
         return audio.info.length if hasattr(audio.info, 'length') else 0.0
-
-    except MutagenError as e:
-        logging.getLogger("whisper_processor").debug(f"Mutagen не смог прочитать {file_path.name}: {e}")
-        return 0.0
-    except Exception as e:
-        logging.getLogger("whisper_processor").debug(f"Ошибка при чтении длительности {file_path.name}: {e}")
+    except Exception:
         return 0.0
 
 
@@ -148,41 +143,53 @@ def main():
             file_path = files[0]
             file_size_mb = file_path.stat().st_size / (1024 * 1024)
 
-            # Сначала mutagen
             duration_sec = get_audio_duration(file_path)
-
-            # Fallback: если mutagen не справился — используем info из модели (точно работает для всех форматов)
             if duration_sec <= 0:
-                try:
-                    _, info = model.transcribe(str(file_path), beam_size=1, best_of=1, temperature=0.0, word_timestamps=False, vad_filter=False)
-                    duration_sec = info.duration
-                except:
-                    duration_sec = 0.0
-
+                duration_sec = 0.0
             duration_str = format_duration(duration_sec)
 
             logger.info(f"Обнаружен файл: {file_path.name} | "
                         f"Размер: {file_size_mb:.1f} МБ | "
-                        f"Длительность: {duration_str} ({duration_sec:.0f} сек)")
+                        f"Длительность: {duration_str}")
 
             try:
+                start_time = time.time()
                 logger.info(f"Транскрибция -> {file_path.name}")
+
                 segments, info = model.transcribe(str(file_path), **transcribe_options)
+
+                if duration_sec <= 0 and info.duration:
+                    duration_sec = info.duration
+                    duration_str = format_duration(duration_sec)
+
+                processing_time = time.time() - start_time
 
                 text = " ".join(segment.text.strip() for segment in segments).strip()
 
                 output_path = output_dir / f"{file_path.stem}.txt"
                 output_path.write_text(text, encoding="utf-8")
 
+                if duration_sec > 0:
+                    rtf = duration_sec / processing_time if processing_time > 0 else float('inf')
+                    speed_str = f"{rtf:.1f}x"
+                else:
+                    speed_str = "неизв."
+
+                # ИСПРАВЛЕНО: правильное форматирование вероятности
+                lang_prob_str = f"{info.language_probability:.2f}" if info.language_probability is not None else "0.00"
+
                 logger.info(f"Успех -> {output_path.name} | "
-                            f"Язык: {info.language or 'авто'} (вероятность: {info.language_probability:.2f if info.language_probability else 0})")
+                            f"Время обработки: {format_duration(processing_time)} | "
+                            f"Скорость: {speed_str} | "
+                            f"Язык: {info.language or 'авто'} (вероятность: {lang_prob_str})")
 
                 if config["delete_input_after_process"]:
                     file_path.unlink()
                     logger.debug(f"Исходный файл удалён: {file_path.name}")
 
             except Exception as e:
-                logger.error(f"Ошибка при обработке {file_path.name}: {e}", exc_info=True)
+                processing_time = time.time() - start_time if 'start_time' in locals() else 0
+                logger.error(f"Ошибка при обработке {file_path.name} (затрачено {format_duration(processing_time)}): {e}", exc_info=True)
                 if failed_dir:
                     dest = failed_dir / file_path.name
                     shutil.move(str(file_path), str(dest))
