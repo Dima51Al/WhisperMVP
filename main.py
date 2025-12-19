@@ -6,6 +6,13 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import yaml
 from faster_whisper import WhisperModel
+from mutagen import MutagenError
+from mutagen.mp3 import MP3
+from mutagen.wave import WAVE
+from mutagen.oggvorbis import OggVorbis
+from mutagen.flac import FLAC
+from mutagen.mp4 import MP4
+from mutagen.ogg import OggFileType
 
 def setup_logger(config: dict):
     log_level = getattr(logging, config["log_level"].upper())
@@ -16,13 +23,11 @@ def setup_logger(config: dict):
         "%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(message)s"
     )
 
-    # Консоль (исправлено для Windows — без спецсимволов)
     ch = logging.StreamHandler()
     ch.setLevel(log_level)
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
-    # Файл лога
     log_file = config.get("log_file")
     if log_file:
         log_dir = Path(log_file).parent
@@ -31,13 +36,53 @@ def setup_logger(config: dict):
             log_file,
             maxBytes=config.get("log_max_bytes", 10 * 1024 * 1024),
             backupCount=config.get("log_backup_count", 5),
-            encoding="utf-8",  # важно для Windows
+            encoding="utf-8",
         )
         fh.setLevel(log_level)
         fh.setFormatter(formatter)
         logger.addHandler(fh)
 
     return logger
+
+
+def format_duration(seconds: float) -> str:
+    if seconds <= 0:
+        return "неизвестно"
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    if hours > 0:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes}:{secs:02d}"
+
+
+def get_audio_duration(file_path: Path) -> float:
+    """Получает длительность через mutagen (быстро, без полной загрузки)"""
+    try:
+        ext = file_path.suffix.lower()
+
+        if ext == ".mp3":
+            audio = MP3(file_path)
+        elif ext == ".wav":
+            audio = WAVE(file_path)
+        elif ext in [".ogg", ".oga"]:
+            audio = OggVorbis(file_path) or OggFileType(file_path)
+        elif ext == ".flac":
+            audio = FLAC(file_path)
+        elif ext in [".m4a", ".mp4"]:
+            audio = MP4(file_path)
+        else:
+            return 0.0  # Для неподдерживаемых — вернём 0, fallback ниже
+
+        return audio.info.length if hasattr(audio.info, 'length') else 0.0
+
+    except MutagenError as e:
+        logging.getLogger("whisper_processor").debug(f"Mutagen не смог прочитать {file_path.name}: {e}")
+        return 0.0
+    except Exception as e:
+        logging.getLogger("whisper_processor").debug(f"Ошибка при чтении длительности {file_path.name}: {e}")
+        return 0.0
 
 
 def main():
@@ -64,7 +109,6 @@ def main():
             config["model_size"],
             device=config["device"],
             compute_type=config["compute_type"],
-            # download_root="./models"  # раскомментируй, если хочешь кэшировать локально
         )
         logger.info(f"Модель {config['model_size']} загружена на {config['device'].upper()} ({config['compute_type']})")
     except Exception as e:
@@ -79,7 +123,7 @@ def main():
         "beam_size": config["beam_size"],
         "temperature": tuple(config["temperature"]),
         "compression_ratio_threshold": config["compression_ratio_threshold"],
-        "log_prob_threshold": config["logprob_threshold"],       # правильное имя
+        "log_prob_threshold": config["logprob_threshold"],
         "no_speech_threshold": config["no_speech_threshold"],
         "condition_on_previous_text": config["condition_on_previous_text"],
         "initial_prompt": config["initial_prompt"],
@@ -102,19 +146,36 @@ def main():
                 continue
 
             file_path = files[0]
-            logger.info(f"Обнаружен файл: {file_path.name}")
+            file_size_mb = file_path.stat().st_size / (1024 * 1024)
+
+            # Сначала mutagen
+            duration_sec = get_audio_duration(file_path)
+
+            # Fallback: если mutagen не справился — используем info из модели (точно работает для всех форматов)
+            if duration_sec <= 0:
+                try:
+                    _, info = model.transcribe(str(file_path), beam_size=1, best_of=1, temperature=0.0, word_timestamps=False, vad_filter=False)
+                    duration_sec = info.duration
+                except:
+                    duration_sec = 0.0
+
+            duration_str = format_duration(duration_sec)
+
+            logger.info(f"Обнаружен файл: {file_path.name} | "
+                        f"Размер: {file_size_mb:.1f} МБ | "
+                        f"Длительность: {duration_str} ({duration_sec:.0f} сек)")
 
             try:
                 logger.info(f"Транскрибция -> {file_path.name}")
                 segments, info = model.transcribe(str(file_path), **transcribe_options)
 
-                # Собираем чистый текст
                 text = " ".join(segment.text.strip() for segment in segments).strip()
 
                 output_path = output_dir / f"{file_path.stem}.txt"
                 output_path.write_text(text, encoding="utf-8")
 
-                logger.info(f"Успех -> {output_path.name}")
+                logger.info(f"Успех -> {output_path.name} | "
+                            f"Язык: {info.language or 'авто'} (вероятность: {info.language_probability:.2f if info.language_probability else 0})")
 
                 if config["delete_input_after_process"]:
                     file_path.unlink()
