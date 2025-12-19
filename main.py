@@ -14,6 +14,7 @@ from mutagen.flac import FLAC
 from mutagen.mp4 import MP4
 from mutagen.ogg import OggFileType
 
+
 def setup_logger(config: dict):
     log_level = getattr(logging, config["log_level"].upper())
     logger = logging.getLogger("whisper_processor")
@@ -189,7 +190,9 @@ def main():
 
             except Exception as e:
                 processing_time = time.time() - start_time if 'start_time' in locals() else 0
-                logger.error(f"Ошибка при обработке {file_path.name} (затрачено {format_duration(processing_time)}): {e}", exc_info=True)
+                logger.error(
+                    f"Ошибка при обработке {file_path.name} (затрачено {format_duration(processing_time)}): {e}",
+                    exc_info=True)
                 if failed_dir:
                     dest = failed_dir / file_path.name
                     shutil.move(str(file_path), str(dest))

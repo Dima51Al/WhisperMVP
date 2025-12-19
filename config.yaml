@@ -1,5 +1,5 @@
 # Основные пути
-model_size: small                   # tiny, base, small, medium, large-v3
+model_size: ./models/small                  # tiny, base, small, medium, large-v3
 input_dir: ./input
 output_dir: ./output
 temp_dir: ./temp
