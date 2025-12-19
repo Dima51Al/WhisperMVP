@@ -1,13 +1,12 @@
 # Основные пути
-model_path: ./models/small.pt       # Путь к модели (.pt)
+model_size: small                   # Размер модели: tiny, base, small, medium, large-v3 и т.д. (вместо пути к .pt)
 input_dir: ./input                  # Папка с входящими аудио
 output_dir: ./output                # Папка для .txt транскрипций
 temp_dir: ./temp                    # Временные файлы (если нужно)
 
-# Параметры транскрибции Whisper
+# Параметры транскрибции
 language: null                      # null = авто, или "ru", "en" и т.д.
 translate: false                    # Переводить на английский?
-task: transcribe                    # transcribe или translate
 beam_size: 5
 best_of: 5
 patience: 1.0
@@ -16,20 +15,21 @@ compression_ratio_threshold: 2.4
 logprob_threshold: -1.0
 no_speech_threshold: 0.6
 condition_on_previous_text: true
-initial_prompt: null                # Строка-подсказка для начала
-word_timestamps: false              # Нужны ли таймстампы слов?
-vad_filter: false                   # Использовать VAD для удаления тишины
-vad_parameters:                     # Параметры VAD (если vad_filter=true)
+initial_prompt: null
+word_timestamps: false              # Таймстампы слов (в faster-whisper возвращает .words)
+
+vad_filter: false                   # Использовать VAD (Silero VAD встроен)
+vad_parameters:                     # Параметры VAD (те же, что были)
   min_speech_duration_ms: 250
   max_speech_duration_s: 30
   min_silence_duration_ms: 2000
   window_size_samples: 1536
   speech_pad_ms: 400
 
-# Технические параметры
-device: cpu                         # cpu или cuda
-batch_size: 8                       # На CPU лучше 1-4, на GPU можно больше
-compute_type: default               # default, float16, int8 (для faster-whisper, но в openai-whisper игнорируется)
+# Технические параметры (для CPU!)
+device: cpu                         # cpu или cuda (у вас только cpu)
+compute_type: int8                  # int8 — лучший выбор для CPU (быстрее и меньше памяти)
+                                    # альтернативы: int8_float32, float32 (медленнее)
 
 # Обработка файлов
 supported_extensions:
@@ -42,16 +42,16 @@ supported_extensions:
   - .mpeg
   - .webm
 
-delete_input_after_process: true     # Удалять исходный файл после успеха
-move_failed_to: null                # Папка для неудачных файлов (null = не перемещать)
+delete_input_after_process: true
+move_failed_to: null
 
 # Логирование
-log_level: INFO                     # DEBUG, INFO, WARNING, ERROR
-log_file: ./logs/whisper.log        # null = только консоль
-log_max_bytes: 10485760             # 10 MB
+log_level: INFO
+log_file: ./logs/whisper.log
+log_max_bytes: 10485760
 log_backup_count: 5
 
 # Поведение цикла
-poll_interval: 5                    # Секунд между проверками input_dir
-max_retries: 3                      # Повторять неудачные файлы
-retry_delay: 30                     # Секунд между повторами
+poll_interval: 5
+max_retries: 3
+retry_delay: 30

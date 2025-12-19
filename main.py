@@ -5,8 +5,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import yaml
-import whisper
-from whisper.utils import get_writer
+from faster_whisper import WhisperModel
 
 # ====================== НАСТРОЙКА ЛОГГЕРА ======================
 def setup_logger(config: dict):
@@ -24,7 +23,7 @@ def setup_logger(config: dict):
     ch.setFormatter(formatter)
     logger.addHandler(ch)
 
-    # Файл (если указан)
+    # Файл
     log_file = config.get("log_file")
     if log_file:
         log_dir = Path(log_file).parent
@@ -60,15 +59,20 @@ def main():
 
     extensions = tuple(config["supported_extensions"])
 
-    logger.info("Загрузка модели Whisper...")
+    logger.info("Загрузка модели faster-whisper...")
     try:
-        model = whisper.load_model(config["model_path"], device=config["device"])
-        logger.info(f"Модель загружена на {config['device'].upper()}")
+        model = WhisperModel(
+            config["model_size"],
+            device=config["device"],
+            compute_type=config["compute_type"],
+            # download_root="./models"  # Раскомментируйте, если хотите кэшировать модели локально
+        )
+        logger.info(f"Модель {config['model_size']} загружена на {config['device'].upper()} с {config['compute_type']}")
     except Exception as e:
         logger.critical(f"Не удалось загрузить модель: {e}")
         return
 
-    logger.info("Whisper-процессор запущен. Ожидаю файлы...")
+    logger.info("Faster-Whisper-процессор запущен. Ожидаю файлы...")
 
     transcribe_options = {
         "language": config["language"],
@@ -83,8 +87,6 @@ def main():
         "condition_on_previous_text": config["condition_on_previous_text"],
         "initial_prompt": config["initial_prompt"],
         "word_timestamps": config["word_timestamps"],
-        "fp16": config["device"] == "cuda",
-        "batch_size": config["batch_size"],
     }
 
     if config["vad_filter"]:
@@ -94,11 +96,7 @@ def main():
     while True:
         try:
             files = sorted(
-                [
-                    f
-                    for f in input_dir.iterdir()
-                    if f.is_file() and f.suffix.lower() in extensions
-                ],
+                [f for f in input_dir.iterdir() if f.is_file() and f.suffix.lower() in extensions],
                 key=lambda x: x.stat().st_mtime,
             )
 
@@ -111,17 +109,14 @@ def main():
 
             try:
                 logger.info(f"Транскрибция → {file_path.name}")
-                result = model.transcribe(str(file_path), **transcribe_options)
+                segments, info = model.transcribe(str(file_path), **transcribe_options)
 
-                # Сохранение текста
-                txt_writer = get_writer("txt", output_dir)
-                txt_writer(result, str(file_path))
+                # Сохранение простого .txt (полный текст без таймстампов)
+                text = " ".join(segment.text.strip() for segment in segments)
+                output_path = output_dir / f"{file_path.stem}.txt"
+                output_path.write_text(text.strip(), encoding="utf-8")
 
-                # Если нужны SRT/VTT/JSON — раскомментируй
-                # srt_writer = get_writer("srt", output_dir)
-                # srt_writer(result, str(file_path))
-
-                logger.info(f"Успех → {file_path.stem}.txt")
+                logger.info(f"Успех → {output_path.name}")
 
                 # Удаление исходника
                 if config["delete_input_after_process"]:
@@ -130,12 +125,10 @@ def main():
 
             except Exception as e:
                 logger.error(f"Ошибка при обработке {file_path.name}: {e}", exc_info=True)
-
                 if failed_dir:
                     dest = failed_dir / file_path.name
                     shutil.move(str(file_path), str(dest))
                     logger.warning(f"Файл перемещён в папку ошибок: {dest}")
-                # Иначе оставляем в input для повторной попытки
 
         except KeyboardInterrupt:
             logger.info("Получен сигнал остановки. Завершение...")
