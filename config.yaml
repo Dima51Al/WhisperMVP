@@ -1,6 +1,57 @@
-model_path: ./models/small.pt
-input_dir: ./input
-output_dir: ./output
-language: null
-batch_size: 1
-device: "cpu"
+# Основные пути
+model_path: ./models/small.pt       # Путь к модели (.pt)
+input_dir: ./input                  # Папка с входящими аудио
+output_dir: ./output                # Папка для .txt транскрипций
+temp_dir: ./temp                    # Временные файлы (если нужно)
+
+# Параметры транскрибции Whisper
+language: null                      # null = авто, или "ru", "en" и т.д.
+translate: false                    # Переводить на английский?
+task: transcribe                    # transcribe или translate
+beam_size: 5
+best_of: 5
+patience: 1.0
+temperature: [0.0, 0.2, 0.4, 0.6, 1.0]
+compression_ratio_threshold: 2.4
+logprob_threshold: -1.0
+no_speech_threshold: 0.6
+condition_on_previous_text: true
+initial_prompt: null                # Строка-подсказка для начала
+word_timestamps: false              # Нужны ли таймстампы слов?
+vad_filter: false                   # Использовать VAD для удаления тишины
+vad_parameters:                     # Параметры VAD (если vad_filter=true)
+  min_speech_duration_ms: 250
+  max_speech_duration_s: 30
+  min_silence_duration_ms: 2000
+  window_size_samples: 1536
+  speech_pad_ms: 400
+
+# Технические параметры
+device: cpu                         # cpu или cuda
+batch_size: 8                       # На CPU лучше 1-4, на GPU можно больше
+compute_type: default               # default, float16, int8 (для faster-whisper, но в openai-whisper игнорируется)
+
+# Обработка файлов
+supported_extensions:
+  - .mp3
+  - .wav
+  - .m4a
+  - .flac
+  - .ogg
+  - .mp4
+  - .mpeg
+  - .webm
+
+delete_input_after_process: true     # Удалять исходный файл после успеха
+move_failed_to: null                # Папка для неудачных файлов (null = не перемещать)
+
+# Логирование
+log_level: INFO                     # DEBUG, INFO, WARNING, ERROR
+log_file: ./logs/whisper.log        # null = только консоль
+log_max_bytes: 10485760             # 10 MB
+log_backup_count: 5
+
+# Поведение цикла
+poll_interval: 5                    # Секунд между проверками input_dir
+max_retries: 3                      # Повторять неудачные файлы
+retry_delay: 30                     # Секунд между повторами
