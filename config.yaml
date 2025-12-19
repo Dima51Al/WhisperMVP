@@ -1,0 +1,6 @@
+model_path: ./models/small.pt
+input_dir: ./input
+output_dir: ./output
+language: null
+batch_size: 1
+device: "cpu"

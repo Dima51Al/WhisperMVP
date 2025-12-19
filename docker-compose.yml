@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  whisper:
+    build: .
+    volumes:
+      - ./models:/app/models
+      - ./input:/app/input
+      - ./output:/app/output
+    restart: unless-stopped
