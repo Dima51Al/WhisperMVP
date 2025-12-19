@@ -1,35 +1,32 @@
 # Основные пути
-model_size: small                   # Размер модели: tiny, base, small, medium, large-v3 и т.д. (вместо пути к .pt)
-input_dir: ./input                  # Папка с входящими аудио
-output_dir: ./output                # Папка для .txt транскрипций
-temp_dir: ./temp                    # Временные файлы (если нужно)
+model_size: small                   # tiny, base, small, medium, large-v3
+input_dir: ./input
+output_dir: ./output
+temp_dir: ./temp
 
 # Параметры транскрибции
-language: null                      # null = авто, или "ru", "en" и т.д.
-translate: false                    # Переводить на английский?
+language: "ru"                      # null = автоопределение, или "ru", "en" и т.д.
+translate: false                    # true = перевод на английский
 beam_size: 5
-best_of: 5
-patience: 1.0
 temperature: [0.0, 0.2, 0.4, 0.6, 1.0]
 compression_ratio_threshold: 2.4
-logprob_threshold: -1.0
+logprob_threshold: -1.0             # теперь используется как log_prob_threshold
 no_speech_threshold: 0.6
 condition_on_previous_text: true
 initial_prompt: null
-word_timestamps: false              # Таймстампы слов (в faster-whisper возвращает .words)
+word_timestamps: false
 
-vad_filter: false                   # Использовать VAD (Silero VAD встроен)
-vad_parameters:                     # Параметры VAD (те же, что были)
+vad_filter: false
+vad_parameters:
   min_speech_duration_ms: 250
   max_speech_duration_s: 30
   min_silence_duration_ms: 2000
   window_size_samples: 1536
   speech_pad_ms: 400
 
-# Технические параметры (для CPU!)
-device: cpu                         # cpu или cuda (у вас только cpu)
-compute_type: int8                  # int8 — лучший выбор для CPU (быстрее и меньше памяти)
-                                    # альтернативы: int8_float32, float32 (медленнее)
+# Технические параметры (CPU only)
+device: cpu
+compute_type: int8                  # int8 — максимальная скорость на CPU
 
 # Обработка файлов
 supported_extensions:
@@ -43,15 +40,13 @@ supported_extensions:
   - .webm
 
 delete_input_after_process: true
-move_failed_to: null
+move_failed_to: null                # или укажи путь, например ./failed
 
 # Логирование
 log_level: INFO
 log_file: ./logs/whisper.log
-log_max_bytes: 10485760
+log_max_bytes: 10485760             # 10 MB
 log_backup_count: 5
 
 # Поведение цикла
 poll_interval: 5
-max_retries: 3
-retry_delay: 30
