@@ -5,8 +5,9 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import yaml
+
 from faster_whisper import WhisperModel
-from mutagen import MutagenError
+
 from mutagen.mp3 import MP3
 from mutagen.wave import WAVE
 from mutagen.oggvorbis import OggVorbis
@@ -24,24 +25,25 @@ def setup_logger(config: dict):
         "%(asctime)s | %(levelname)-8s | %(filename)s:%(lineno)d | %(message)s"
     )
 
-    ch = logging.StreamHandler()
-    ch.setLevel(log_level)
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+    if not logger.handlers:
+        ch = logging.StreamHandler()
+        ch.setLevel(log_level)
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
 
-    log_file = config.get("log_file")
-    if log_file:
-        log_dir = Path(log_file).parent
-        log_dir.mkdir(parents=True, exist_ok=True)
-        fh = RotatingFileHandler(
-            log_file,
-            maxBytes=config.get("log_max_bytes", 10 * 1024 * 1024),
-            backupCount=config.get("log_backup_count", 5),
-            encoding="utf-8",
-        )
-        fh.setLevel(log_level)
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
+        log_file = config.get("log_file")
+        if log_file:
+            log_dir = Path(log_file).parent
+            log_dir.mkdir(parents=True, exist_ok=True)
+            fh = RotatingFileHandler(
+                log_file,
+                maxBytes=config.get("log_max_bytes", 10 * 1024 * 1024),
+                backupCount=config.get("log_backup_count", 5),
+                encoding="utf-8",
+            )
+            fh.setLevel(log_level)
+            fh.setFormatter(formatter)
+            logger.addHandler(fh)
 
     return logger
 
@@ -76,7 +78,7 @@ def get_audio_duration(file_path: Path) -> float:
             audio = MP4(file_path)
         else:
             return 0.0
-        return audio.info.length if hasattr(audio.info, 'length') else 0.0
+        return audio.info.length if hasattr(audio.info, "length") else 0.0
     except Exception:
         return 0.0
 
@@ -90,7 +92,7 @@ def main():
     input_dir = Path(config["input_dir"])
     output_dir = Path(config["output_dir"])
     temp_dir = Path(config.get("temp_dir", "./temp"))
-    failed_dir = Path(config["move_failed_to"]) if config["move_failed_to"] else None
+    failed_dir = Path(config["move_failed_to"]) if config.get("move_failed_to") else None
 
     for p in [input_dir, output_dir, temp_dir]:
         p.mkdir(parents=True, exist_ok=True)
@@ -106,12 +108,13 @@ def main():
             device=config["device"],
             compute_type=config["compute_type"],
         )
-        logger.info(f"Модель {config['model_size']} загружена на {config['device'].upper()} ({config['compute_type']})")
+        logger.info(
+            f"Модель {config['model_size']} загружена на "
+            f"{config['device'].upper()} ({config['compute_type']})"
+        )
     except Exception as e:
         logger.critical(f"Не удалось загрузить модель: {e}")
         return
-
-    logger.info("Faster-Whisper процессор запущен. Ожидаю файлы в ./input...")
 
     transcribe_options = {
         "language": config["language"],
@@ -130,10 +133,16 @@ def main():
         transcribe_options["vad_filter"] = True
         transcribe_options["vad_parameters"] = config["vad_parameters"]
 
+    logger.info("Faster-Whisper процессор запущен. Ожидание файлов...")
+
     while True:
         try:
             files = sorted(
-                [f for f in input_dir.iterdir() if f.is_file() and f.suffix.lower() in extensions],
+                [
+                    f
+                    for f in input_dir.iterdir()
+                    if f.is_file() and f.suffix.lower() in extensions
+                ],
                 key=lambda x: x.stat().st_mtime,
             )
 
@@ -145,67 +154,76 @@ def main():
             file_size_mb = file_path.stat().st_size / (1024 * 1024)
 
             duration_sec = get_audio_duration(file_path)
-            if duration_sec <= 0:
-                duration_sec = 0.0
             duration_str = format_duration(duration_sec)
 
-            logger.info(f"Обнаружен файл: {file_path.name} | "
-                        f"Размер: {file_size_mb:.1f} МБ | "
-                        f"Длительность: {duration_str}")
+            logger.info(
+                f"Обнаружен файл: {file_path.name} | "
+                f"Размер: {file_size_mb:.1f} МБ | "
+                f"Длительность: {duration_str}"
+            )
+
+            start_time = time.time()
 
             try:
-                start_time = time.time()
-                logger.info(f"Транскрибция -> {file_path.name}")
+                segments, info = model.transcribe(
+                    str(file_path), **transcribe_options
+                )
 
-                segments, info = model.transcribe(str(file_path), **transcribe_options)
-
-                if duration_sec <= 0 and info.duration:
-                    duration_sec = info.duration
-                    duration_str = format_duration(duration_sec)
+                # ===== ВАЖНО: генератор -> список =====
+                segments = list(segments)
 
                 processing_time = time.time() - start_time
 
-                text = " ".join(segment.text.strip() for segment in segments).strip()
+                # ===== name.txt (сплошной текст) =====
+                full_text = " ".join(
+                    s.text.strip() for s in segments if s.text.strip()
+                )
 
-                output_path = output_dir / f"{file_path.stem}.txt"
-                output_path.write_text(text, encoding="utf-8")
+                output_text_path = output_dir / f"{file_path.stem}.txt"
+                output_text_path.write_text(full_text, encoding="utf-8")
 
-                if duration_sec > 0:
-                    rtf = duration_sec / processing_time if processing_time > 0 else float('inf')
-                    speed_str = f"{rtf:.1f}x"
-                else:
-                    speed_str = "неизв."
+                # ===== name_segments.txt (с таймкодами) =====
+                segments_path = output_dir / f"{file_path.stem}_segments.txt"
 
-                # ИСПРАВЛЕНО: правильное форматирование вероятности
-                lang_prob_str = f"{info.language_probability:.2f}" if info.language_probability is not None else "0.00"
+                with segments_path.open("w", encoding="utf-8") as f:
+                    for s in segments:
+                        text = s.text.strip()
+                        if not text:
+                            continue
+                        f.write(f"[{s.start:.2f} - {s.end:.2f}] {text}\n")
 
-                logger.info(f"Успех -> {output_path.name} | "
-                            f"Время обработки: {format_duration(processing_time)} | "
-                            f"Скорость: {speed_str} | "
-                            f"Язык: {info.language or 'авто'} (вероятность: {lang_prob_str})")
+                rtf = (
+                    duration_sec / processing_time
+                    if duration_sec > 0 and processing_time > 0
+                    else 0
+                )
+
+                logger.info(
+                    f"Успех -> {file_path.name} | "
+                    f"Время: {format_duration(processing_time)} | "
+                    f"Скорость: {rtf:.1f}x | "
+                    f"Файлы: {output_text_path.name}, {segments_path.name}"
+                )
 
                 if config["delete_input_after_process"]:
                     file_path.unlink()
-                    logger.debug(f"Исходный файл удалён: {file_path.name}")
 
             except Exception as e:
-                processing_time = time.time() - start_time if 'start_time' in locals() else 0
                 logger.error(
-                    f"Ошибка при обработке {file_path.name} (затрачено {format_duration(processing_time)}): {e}",
-                    exc_info=True)
+                    f"Ошибка обработки {file_path.name}: {e}", exc_info=True
+                )
                 if failed_dir:
-                    dest = failed_dir / file_path.name
-                    shutil.move(str(file_path), str(dest))
-                    logger.warning(f"Файл перемещён в папку ошибок: {dest}")
+                    shutil.move(
+                        str(file_path),
+                        str(failed_dir / file_path.name),
+                    )
 
         except KeyboardInterrupt:
-            logger.info("Получен сигнал остановки. Завершение...")
+            logger.info("Остановка по Ctrl+C")
             break
         except Exception as e:
-            logger.critical(f"Критическая ошибка в цикле: {e}", exc_info=True)
-            time.sleep(10)
-
-    logger.info("Работа завершена.")
+            logger.critical(f"Критическая ошибка: {e}", exc_info=True)
+            time.sleep(5)
 
 
 if __name__ == "__main__":
