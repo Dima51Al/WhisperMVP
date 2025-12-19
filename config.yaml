@@ -5,7 +5,7 @@ output_dir: ./output
 temp_dir: ./temp
 
 # Параметры транскрибции
-language: null                      # null = автоопределение, или "ru", "en" и т.д.
+language: "ru"                      # null = автоопределение, или "ru", "en" и т.д.
 translate: false                    # true = перевод на английский
 beam_size: 5
 temperature: [0.0, 0.2, 0.4, 0.6, 1.0]
