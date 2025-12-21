@@ -16,12 +16,11 @@ condition_on_previous_text: true
 initial_prompt: null
 word_timestamps: false
 
-vad_filter: false
+vad_filter: true
 vad_parameters:
   min_speech_duration_ms: 250
   max_speech_duration_s: 30
   min_silence_duration_ms: 2000
-  window_size_samples: 1536
   speech_pad_ms: 400
 
 # Технические параметры (CPU only)

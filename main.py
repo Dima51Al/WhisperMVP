@@ -16,6 +16,9 @@ from mutagen.mp4 import MP4
 from mutagen.ogg import OggFileType
 
 
+# =========================
+# ЛОГГЕР
+# =========================
 def setup_logger(config: dict):
     log_level = getattr(logging, config["log_level"].upper())
     logger = logging.getLogger("whisper_processor")
@@ -48,6 +51,9 @@ def setup_logger(config: dict):
     return logger
 
 
+# =========================
+# ВСПОМОГАТЕЛЬНОЕ
+# =========================
 def format_duration(seconds: float) -> str:
     if seconds <= 0:
         return "неизвестно"
@@ -83,6 +89,9 @@ def get_audio_duration(file_path: Path) -> float:
         return 0.0
 
 
+# =========================
+# MAIN
+# =========================
 def main():
     with open("config.yaml", encoding="utf-8") as f:
         config = yaml.safe_load(f)
@@ -101,6 +110,7 @@ def main():
 
     extensions = tuple(ext.lower() for ext in config["supported_extensions"])
 
+    # ===== ЗАГРУЗКА МОДЕЛИ =====
     logger.info("Загрузка модели faster-whisper...")
     try:
         model = WhisperModel(
@@ -116,6 +126,7 @@ def main():
         logger.critical(f"Не удалось загрузить модель: {e}")
         return
 
+    # ===== ПАРАМЕТРЫ WHISPER (БЕЗ VAD!) =====
     transcribe_options = {
         "language": config["language"],
         "task": "translate" if config["translate"] else "transcribe",
@@ -129,12 +140,28 @@ def main():
         "word_timestamps": config["word_timestamps"],
     }
 
-    if config["vad_filter"]:
-        transcribe_options["vad_filter"] = True
-        transcribe_options["vad_parameters"] = config["vad_parameters"]
+    # ===== ПАРАМЕТРЫ VAD (ОТДЕЛЬНО!) =====
+    vad_filter = False
+    vad_parameters = None
+
+    if config.get("vad_filter"):
+        vad_filter = True
+        vad_cfg = config.get("vad_parameters", {})
+
+        vad_parameters = {
+            "min_speech_duration_ms": vad_cfg.get("min_speech_duration_ms", 250),
+            "max_speech_duration_s": vad_cfg.get("max_speech_duration_s", 30),
+            "min_silence_duration_ms": vad_cfg.get("min_silence_duration_ms", 2000),
+            "speech_pad_ms": vad_cfg.get("speech_pad_ms", 400),
+        }
+
+        logger.info(f"VAD включён: {vad_parameters}")
+    else:
+        logger.info("VAD отключён")
 
     logger.info("Faster-Whisper процессор запущен. Ожидание файлов...")
 
+    # ===== ОСНОВНОЙ ЦИКЛ =====
     while True:
         try:
             files = sorted(
@@ -166,15 +193,18 @@ def main():
 
             try:
                 segments, info = model.transcribe(
-                    str(file_path), **transcribe_options
+                    str(file_path),
+                    vad_filter=vad_filter,
+                    vad_parameters=vad_parameters,
+                    **transcribe_options,
                 )
 
-                # ===== ВАЖНО: генератор -> список =====
+                # генератор → список
                 segments = list(segments)
 
                 processing_time = time.time() - start_time
 
-                # ===== name.txt (сплошной текст) =====
+                # ===== СПЛОШНОЙ ТЕКСТ =====
                 full_text = " ".join(
                     s.text.strip() for s in segments if s.text.strip()
                 )
@@ -182,9 +212,8 @@ def main():
                 output_text_path = output_dir / f"{file_path.stem}.txt"
                 output_text_path.write_text(full_text, encoding="utf-8")
 
-                # ===== name_segments.txt (с таймкодами) =====
+                # ===== СЕГМЕНТЫ С ТАЙМКОДАМИ =====
                 segments_path = output_dir / f"{file_path.stem}_segments.txt"
-
                 with segments_path.open("w", encoding="utf-8") as f:
                     for s in segments:
                         text = s.text.strip()
