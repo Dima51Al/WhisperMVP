@@ -15,6 +15,8 @@ from mutagen.flac import FLAC
 from mutagen.mp4 import MP4
 from mutagen.ogg import OggFileType
 
+BASE_DIR = Path(__file__).resolve().parent
+
 
 # =========================
 # ЛОГГЕР
@@ -89,19 +91,28 @@ def get_audio_duration(file_path: Path) -> float:
         return 0.0
 
 
+def resolve_path(raw_path: str) -> Path:
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = BASE_DIR / path
+    return path.resolve()
+
+
 # =========================
 # MAIN
 # =========================
 def main():
-    with open("config.yaml", encoding="utf-8") as f:
+    config_path = BASE_DIR / "config.yaml"
+    with config_path.open(encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     logger = setup_logger(config)
 
-    input_dir = Path(config["input_dir"])
-    output_dir = Path(config["output_dir"])
-    temp_dir = Path(config.get("temp_dir", "./temp"))
-    failed_dir = Path(config["move_failed_to"]) if config.get("move_failed_to") else None
+    input_dir = resolve_path(config["input_dir"])
+    output_dir = resolve_path(config["output_dir"])
+    temp_dir = resolve_path(config.get("temp_dir", "./temp"))
+    failed_dir = resolve_path(config["move_failed_to"]) if config.get("move_failed_to") else None
+    model_path = resolve_path(config["model_size"])
 
     for p in [input_dir, output_dir, temp_dir]:
         p.mkdir(parents=True, exist_ok=True)
@@ -114,12 +125,12 @@ def main():
     logger.info("Загрузка модели faster-whisper...")
     try:
         model = WhisperModel(
-            config["model_size"],
+            str(model_path),
             device=config["device"],
             compute_type=config["compute_type"],
         )
         logger.info(
-            f"Модель {config['model_size']} загружена на "
+            f"Модель {model_path} загружена на "
             f"{config['device'].upper()} ({config['compute_type']})"
         )
     except Exception as e:
